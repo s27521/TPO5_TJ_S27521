@@ -7,10 +7,7 @@
 package zad1;
 
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
@@ -40,12 +37,10 @@ public class ChatClient {
             clientSocket.connect(new InetSocketAddress(host, port), 1000);
 
             reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-            writer = new PrintWriter(clientSocket.getOutputStream(), true);
+            writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(clientSocket.getOutputStream())), true);
 
             writer.println("LOGIN|" + id);
 
-        } catch (UnknownHostException e) {
-            throw new RuntimeException(e);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -62,7 +57,7 @@ public class ChatClient {
     }
 
     public String getChatView(){
-        return "\n=== " + id + " chat view\n" + chatView.toString();
+        return chatView.toString();
     }
 
     public String getId() {
@@ -71,13 +66,11 @@ public class ChatClient {
 
     private void listen() {
         try {
-            while (!clientSocket.isClosed()) {
+            while (true) {
                 for (String line; (line = reader.readLine()) != null; ) {
-                    chatView.append(line);
+                    chatView.append(line).append("\n");
                 }
             }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        } catch (IOException ignored) {}
     }
 }  

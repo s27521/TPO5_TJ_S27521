@@ -13,8 +13,8 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -26,8 +26,8 @@ public class ChatServer {
     private ExecutorService reqHandlerService;
     private Thread serverThread;
 
-    private Map<Socket, String> clients = new HashMap<>();
-    private StringBuilder log = new StringBuilder();
+    private Map<Socket, ClientConnection> clients = new ConcurrentHashMap<>();
+    private StringBuffer log = new StringBuffer();
 
     public ChatServer(int port) {
         this.port = port;
@@ -93,6 +93,7 @@ public class ChatServer {
 
             try (client;
                  BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
+                 PrintWriter writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(client.getOutputStream())), true)
             ) {
                 for (String line; (line = reader.readLine()) != null;) {
                     String time = LocalTime.now()
@@ -101,23 +102,20 @@ public class ChatServer {
                     String cmd = req[0];
 
                     if (cmd.equalsIgnoreCase("LOGOUT")) {
-                        String id = clients.get(client);
+                        String id = clients.get(client).id;
                         broadcast(id + " logged out", time);
                         clients.remove(client);
-                        client.close();
                     } else if (cmd.equals("LOGIN")) {
                         String id = req[1];
-                        clients.put(client, id);
+                        clients.put(client, new ClientConnection(id, writer));
                         broadcast(id + " logged in", time);
                     } else if (cmd.equals("MSG")) {
-                        String id = clients.get(client);
+                        String id = clients.get(client).id;
                         String msg = req[1];
                         broadcast(id + ": " + msg, time);
                     }
                 }
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            } catch (IOException ignored) {}
 
         } catch (SocketException exc) {
             System.out.println("Handle request timeout: " + exc);
@@ -125,16 +123,9 @@ public class ChatServer {
     }
 
     private void broadcast(String message, String time) {
-        log.append(time).append(" ").append(message).append("\n");
+        String logLine = time + " " + message + "\n";
+        log.append(logLine);
 
-        clients.keySet().stream().parallel().forEach(cs -> {
-            try (cs;
-                 PrintWriter writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(cs.getOutputStream())), true)
-            ){
-                writer.println(message);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        });
+        clients.values().forEach(client -> client.writer.println(message));
     }
 }  
