@@ -28,8 +28,11 @@ public class ChatServer {
     private ExecutorService reqHandlerService;
     private Thread serverThread;
 
-    private Map<Socket, String> clients = new ConcurrentHashMap<>();
-    private List<ServerLog> logs = new ArrayList<>();
+    private Object broadcastLock = new Object();
+    private ServerSocket ss;
+
+    private Map<Socket, ClientConnection> clients = new ConcurrentHashMap<>();
+    private List<String> logs = new ArrayList<>();
 
     public ChatServer(int port) {
         this.port = port;
@@ -40,7 +43,6 @@ public class ChatServer {
     }
 
     public void startServer(int backlog) {
-        ServerSocket ss;
         try {
             ss = new ServerSocket(port, backlog);
             reqHandlerService = Executors.newVirtualThreadPerTaskExecutor();
@@ -55,9 +57,7 @@ public class ChatServer {
         try {
             reqHandlerService.shutdown();
             reqHandlerService.awaitTermination(1, TimeUnit.SECONDS);
-            String time = LocalTime.now()
-                    .format(DateTimeFormatter.ofPattern("HH:mm:ss.SSS"));
-            logs.add(new ServerLog(time,"ChatServer: chat closed"));
+            broadcast("ChatServer: chat closed");
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
@@ -65,7 +65,7 @@ public class ChatServer {
     }
 
     public String getServerLog() {
-        return String.join("\n", logs.stream().map(ServerLog::toString).toList()) + "\n";
+        return String.join("\n", logs) + "\n";
     }
 
     private void serviceConnections(ServerSocket server) {
@@ -88,47 +88,42 @@ public class ChatServer {
         serverThread = Thread.startVirtualThread(stask);
     }
 
-    private void handleRequest(Socket client) {
-        try {
-            client.setSoTimeout(3000);
-            client.setTcpNoDelay(false);
+    private int lastBroadcastMessage = 0;
 
-            try (client;
-                 BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
-                 PrintWriter writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(client.getOutputStream())), true)
+    private void handleRequest(Socket socket) {
+        try {
+            socket.setSoTimeout(3000);
+            socket.setTcpNoDelay(false);
+
+            try (socket;
+                 BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                 PrintWriter writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(socket.getOutputStream())), true)
             ) {
-                int i = 0;
-                for (String line; (line = reader.readLine()) != null;) {
-                    String time = LocalTime.now()
-                            .format(DateTimeFormatter.ofPattern("HH:mm:ss.nnn"));
+                ClientConnection client = new ClientConnection(writer);
+                String line;
+
+                while ((line = reader.readLine()) != null) {
                     String[] req = line.split("\\|", 2);
                     String cmd = req[0];
 
                     if (cmd.equalsIgnoreCase("LOGOUT")) {
-                        String id = clients.get(client);
-                        addLog(id + " logged out", time);
-                        clients.remove(client);
+                        String id = clients.get(socket).getId();
+                        broadcast(id + " logged out");
+                        clients.remove(socket);
                     } else if (cmd.equals("LOGIN")) {
                         String id = req[1];
-                        clients.put(client, id);
-                        i = addLog(id + " logged in", time);
+                        client.setId(id);
+                        clients.put(socket, client);
+                        broadcast(id + " logged in");
                     } else if (cmd.equals("MSG")) {
-                        String id = clients.get(client);
+                        String id = clients.get(socket).getId();
                         String msg = req[1];
-                        addLog(id + ": " + msg, time);
+                        broadcast(id + ": " + msg);
                     }
-                    writer.println(logs.get(i).message);
-                    i++;
-
                     if (serverThread.isInterrupted())
                         break;
                 }
-                clients.remove(client);
                 while (!clients.isEmpty()) {}
-                for (; i < logs.size(); i++) {
-                    writer.println(logs.get(i).message);
-                }
-                writer.println("ChatServer: chat closed");
             } catch (IOException ignored) {}
 
         } catch (SocketException exc) {
@@ -136,10 +131,18 @@ public class ChatServer {
         }
     }
 
-    private synchronized int addLog(String message, String time) {
-        String timer = LocalTime.now()
-                .format(DateTimeFormatter.ofPattern("HH:mm:ss.nnn"));
-        logs.add(new ServerLog(timer, message));
-        return logs.size()-1;
+    private void broadcast(String message) {
+        synchronized (broadcastLock) {
+            String time = LocalTime.now()
+                    .format(DateTimeFormatter.ofPattern("HH:mm:ss.nnn"));
+            logs.add(time + " " + message);
+            lastBroadcastMessage++;
+            for (ClientConnection value : clients.values()) {
+                value.getWriter().println(message);
+                value.raise();
+            }
+            if (message.equalsIgnoreCase("ChatServer: chat closed"))
+                clients.clear();
+        }
     }
 }  
