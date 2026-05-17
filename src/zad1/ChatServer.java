@@ -123,6 +123,8 @@ public class ChatServer {
                     if (serverThread.isInterrupted())
                         break;
                 }
+                clients.remove(client);
+                while (!clients.isEmpty()) {}
                 for (; i < logs.size(); i++) {
                     writer.println(logs.get(i).message);
                 }
