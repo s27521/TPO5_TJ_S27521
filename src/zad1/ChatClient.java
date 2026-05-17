@@ -10,7 +10,6 @@ package zad1;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.UnknownHostException;
 
 public class ChatClient {
     private String host;
@@ -65,10 +64,18 @@ public class ChatClient {
     }
 
     private void listen() {
+        boolean start = false;
         try {
-            while (true) {
+            while (!clientSocket.isClosed()) {
                 for (String line; (line = reader.readLine()) != null; ) {
-                    chatView.append(line).append("\n");
+                    if (line.equalsIgnoreCase(id + " logged in"))
+                        start = true;
+                    if (start)
+                        chatView.append(line).append("\n");
+                    if (line.equalsIgnoreCase(id + " logged out") || line.equalsIgnoreCase("ChatServer: chat closed")) {
+                        clientSocket.close();
+                        break;
+                    }
                 }
             }
         } catch (IOException ignored) {}
